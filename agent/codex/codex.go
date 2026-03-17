@@ -136,7 +136,27 @@ func (a *Agent) AvailableReasoningEfforts() []string {
 	return []string{"low", "medium", "high", "xhigh"}
 }
 
+func (a *Agent) configuredModels() []core.ModelOption {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.activeIdx < 0 || a.activeIdx >= len(a.providers) {
+		return nil
+	}
+	ms := a.providers[a.activeIdx].Models
+	if len(ms) == 0 {
+		return nil
+	}
+	opts := make([]core.ModelOption, len(ms))
+	for i, m := range ms {
+		opts[i] = core.ModelOption{Name: m}
+	}
+	return opts
+}
+
 func (a *Agent) AvailableModels(ctx context.Context) []core.ModelOption {
+	if models := a.configuredModels(); len(models) > 0 {
+		return models
+	}
 	if models := a.fetchModelsFromAPI(ctx); len(models) > 0 {
 		return models
 	}

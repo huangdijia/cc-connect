@@ -177,6 +177,7 @@ type ProviderConfig struct {
 	APIKey   string
 	BaseURL  string
 	Model    string
+	Models   []string          // pre-configured list of available models for this provider
 	Thinking string            // override thinking type sent to this provider ("disabled", "enabled", or "" for no rewrite)
 	Env      map[string]string // arbitrary extra env vars (e.g. CLAUDE_CODE_USE_BEDROCK=1)
 }

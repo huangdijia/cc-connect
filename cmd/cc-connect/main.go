@@ -140,6 +140,7 @@ func main() {
 					APIKey:   p.APIKey,
 					BaseURL:  p.BaseURL,
 					Model:    p.Model,
+					Models:   p.Models,
 					Thinking: p.Thinking,
 					Env:      p.Env,
 				}
@@ -435,7 +436,7 @@ func main() {
 		engine.SetProviderAddSaveFunc(func(p core.ProviderConfig) error {
 			return config.AddProviderToConfig(projName, config.ProviderConfig{
 				Name: p.Name, APIKey: p.APIKey, BaseURL: p.BaseURL,
-				Model: p.Model, Thinking: p.Thinking, Env: p.Env,
+				Model: p.Model, Models: p.Models, Thinking: p.Thinking, Env: p.Env,
 			})
 		})
 		engine.SetProviderRemoveSaveFunc(func(name string) error {
@@ -893,7 +894,7 @@ func reloadConfig(configPath, projName string, engine *core.Engine) (*core.Confi
 		for i, p := range proj.Agent.Providers {
 			providers[i] = core.ProviderConfig{
 				Name: p.Name, APIKey: p.APIKey, BaseURL: p.BaseURL,
-				Model: p.Model, Thinking: p.Thinking, Env: p.Env,
+				Model: p.Model, Models: p.Models, Thinking: p.Thinking, Env: p.Env,
 			}
 		}
 		ps.SetProviders(providers)

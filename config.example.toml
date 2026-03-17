@@ -522,6 +522,9 @@ mode = "default" # "default" | "acceptEdits" (edit) | "plan" | "bypassPermission
 # api_key = "sk-xxx"
 # base_url = "https://api.relay-service.com"
 # model = "claude-sonnet-4-20250514"
+# # Optional: pre-configure available models shown by /model command
+# # 可选：预先配置 /model 命令显示的可用模型列表（留空则自动从 API 获取）
+# models = ["claude-sonnet-4-20250514", "claude-opus-4-20250514", "claude-haiku-3-5-20241022"]
 #
 # # Third-party provider with thinking override / 第三方 Provider 并覆盖 thinking 参数
 # # Some providers (e.g. SiliconFlow) don't support Claude's adaptive thinking.

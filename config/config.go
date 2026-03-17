@@ -183,6 +183,7 @@ type ProviderConfig struct {
 	APIKey   string            `toml:"api_key"`
 	BaseURL  string            `toml:"base_url,omitempty"`
 	Model    string            `toml:"model,omitempty"`
+	Models   []string          `toml:"models,omitempty"`
 	Thinking string            `toml:"thinking,omitempty"`
 	Env      map[string]string `toml:"env,omitempty"`
 }
@@ -1007,6 +1008,7 @@ func cloneAgentConfig(in AgentConfig) AgentConfig {
 				APIKey:   in.Providers[i].APIKey,
 				BaseURL:  in.Providers[i].BaseURL,
 				Model:    in.Providers[i].Model,
+				Models:   append([]string(nil), in.Providers[i].Models...),
 				Thinking: in.Providers[i].Thinking,
 				Env:      cloneStringMap(in.Providers[i].Env),
 			}
