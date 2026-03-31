@@ -18,27 +18,28 @@ var configMu sync.Mutex
 var ConfigPath string
 
 type Config struct {
-	DataDir         string              `toml:"data_dir"` // session store directory, default ~/.cc-connect
-	AttachmentSend  string              `toml:"attachment_send"`
-	Projects        []ProjectConfig     `toml:"projects"`
-	Commands        []CommandConfig     `toml:"commands"`     // global custom slash commands
-	Aliases         []AliasConfig       `toml:"aliases"`      // global command aliases
-	BannedWords     []string            `toml:"banned_words"` // messages containing any of these words are blocked
-	Log             LogConfig           `toml:"log"`
-	Language        string              `toml:"language"` // "en" or "zh", default is "en"
-	Speech          SpeechConfig        `toml:"speech"`
-	TTS             TTSConfig           `toml:"tts"`
-	Display         DisplayConfig       `toml:"display"`
-	StreamPreview   StreamPreviewConfig `toml:"stream_preview"`  // real-time streaming preview
-	RateLimit       RateLimitConfig          `toml:"rate_limit"`           // per-session rate limiting
-	OutgoingRateLimit OutgoingRateLimitConfig `toml:"outgoing_rate_limit"`  // outgoing message throttling
-	Relay           RelayConfig         `toml:"relay"`           // bot-to-bot relay behavior
-	Quiet           *bool               `toml:"quiet,omitempty"` // global default for quiet mode; project-level overrides this
-	Cron            CronConfig          `toml:"cron"`
-	Webhook         WebhookConfig       `toml:"webhook"`
-	Bridge          BridgeConfig        `toml:"bridge"`
-	Management      ManagementConfig    `toml:"management"`
-	IdleTimeoutMins *int                `toml:"idle_timeout_mins,omitempty"` // max minutes between agent events; 0 = no timeout; default 120
+	DataDir           string                  `toml:"data_dir"` // session store directory, default ~/.cc-connect
+	AttachmentSend    string                  `toml:"attachment_send"`
+	Providers         []ProviderConfig        `toml:"providers"`
+	Projects          []ProjectConfig         `toml:"projects"`
+	Commands          []CommandConfig         `toml:"commands"`     // global custom slash commands
+	Aliases           []AliasConfig           `toml:"aliases"`      // global command aliases
+	BannedWords       []string                `toml:"banned_words"` // messages containing any of these words are blocked
+	Log               LogConfig               `toml:"log"`
+	Language          string                  `toml:"language"` // "en" or "zh", default is "en"
+	Speech            SpeechConfig            `toml:"speech"`
+	TTS               TTSConfig               `toml:"tts"`
+	Display           DisplayConfig           `toml:"display"`
+	StreamPreview     StreamPreviewConfig     `toml:"stream_preview"`      // real-time streaming preview
+	RateLimit         RateLimitConfig         `toml:"rate_limit"`          // per-session rate limiting
+	OutgoingRateLimit OutgoingRateLimitConfig `toml:"outgoing_rate_limit"` // outgoing message throttling
+	Relay             RelayConfig             `toml:"relay"`               // bot-to-bot relay behavior
+	Quiet             *bool                   `toml:"quiet,omitempty"`     // global default for quiet mode; project-level overrides this
+	Cron              CronConfig              `toml:"cron"`
+	Webhook           WebhookConfig           `toml:"webhook"`
+	Bridge            BridgeConfig            `toml:"bridge"`
+	Management        ManagementConfig        `toml:"management"`
+	IdleTimeoutMins   *int                    `toml:"idle_timeout_mins,omitempty"` // max minutes between agent events; 0 = no timeout; default 120
 }
 
 // CronConfig controls cron job behavior.
@@ -97,7 +98,7 @@ type RateLimitConfig struct {
 type OutgoingRateLimitConfig struct {
 	MaxPerSecond *float64                               `toml:"max_per_second"` // messages per second; 0 = unlimited (default)
 	Burst        *int                                   `toml:"burst"`          // max burst size; default = ceil(max_per_second)
-	Platforms    map[string]OutgoingRateLimitPlatConfig  `toml:"platforms"`      // per-platform overrides keyed by platform type name
+	Platforms    map[string]OutgoingRateLimitPlatConfig `toml:"platforms"`      // per-platform overrides keyed by platform type name
 }
 
 // OutgoingRateLimitPlatConfig is a per-platform override for outgoing rate limiting.
@@ -208,7 +209,7 @@ type ProjectConfig struct {
 type AgentConfig struct {
 	Type      string           `toml:"type"`
 	Options   map[string]any   `toml:"options"`
-	Providers []ProviderConfig `toml:"providers"`
+	Providers []ProviderConfig `toml:"providers"` // legacy per-project providers; top-level Config.Providers is preferred
 }
 
 // ProviderModelConfig defines a selectable model entry for a provider,
@@ -295,6 +296,9 @@ func (c *Config) validate() error {
 	if len(c.Projects) == 0 {
 		return fmt.Errorf("config: at least one [[projects]] entry is required")
 	}
+	if dup := firstDuplicateProviderName(c.Providers); dup != "" {
+		return fmt.Errorf("config: duplicate provider name %q in top-level providers", dup)
+	}
 	for i, proj := range c.Projects {
 		prefix := fmt.Sprintf("projects[%d]", i)
 		if proj.Name == "" {
@@ -318,6 +322,9 @@ func (c *Config) validate() error {
 			if _, ok := proj.Agent.Options["work_dir"]; ok {
 				return fmt.Errorf("project %q: multi-workspace mode conflicts with agent work_dir (use base_dir instead)", proj.Name)
 			}
+		}
+		if active := stringOption(proj.Agent.Options["provider"]); active != "" && !hasProviderNamed(c.effectiveProvidersForProject(proj), active) {
+			return fmt.Errorf("config: %s.agent.options.provider %q not found in effective providers", prefix, active)
 		}
 		if err := validateUsersConfig(prefix, proj.Users); err != nil {
 			return err
@@ -363,6 +370,87 @@ func validateUsersConfig(prefix string, u *UsersConfig) error {
 	return nil
 }
 
+func (c *Config) effectiveProvidersForProject(proj ProjectConfig) []ProviderConfig {
+	if len(c.Providers) > 0 {
+		return cloneProviderConfigs(c.Providers)
+	}
+	return cloneProviderConfigs(proj.Agent.Providers)
+}
+
+func findProject(cfg *Config, projectName string) (*ProjectConfig, error) {
+	for i := range cfg.Projects {
+		if cfg.Projects[i].Name == projectName {
+			return &cfg.Projects[i], nil
+		}
+	}
+	return nil, fmt.Errorf("project %q not found in config", projectName)
+}
+
+func hasProviderNamed(providers []ProviderConfig, name string) bool {
+	for _, provider := range providers {
+		if provider.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+func firstDuplicateProviderName(providers []ProviderConfig) string {
+	seen := make(map[string]struct{}, len(providers))
+	for _, provider := range providers {
+		if provider.Name == "" {
+			continue
+		}
+		if _, ok := seen[provider.Name]; ok {
+			return provider.Name
+		}
+		seen[provider.Name] = struct{}{}
+	}
+	return ""
+}
+
+func cloneProviderConfigs(providers []ProviderConfig) []ProviderConfig {
+	if len(providers) == 0 {
+		return nil
+	}
+	out := make([]ProviderConfig, len(providers))
+	for i, provider := range providers {
+		out[i] = provider
+		if len(provider.Models) > 0 {
+			out[i].Models = append([]ProviderModelConfig(nil), provider.Models...)
+		}
+		if len(provider.Env) > 0 {
+			out[i].Env = make(map[string]string, len(provider.Env))
+			for k, v := range provider.Env {
+				out[i].Env[k] = v
+			}
+		}
+	}
+	return out
+}
+
+func ensureTopLevelProvidersForProject(cfg *Config, projectName string) error {
+	proj, err := findProject(cfg, projectName)
+	if err != nil {
+		return err
+	}
+	if len(cfg.Providers) > 0 {
+		return nil
+	}
+	cfg.Providers = cloneProviderConfigs(cfg.effectiveProvidersForProject(*proj))
+	return nil
+}
+
+// GetEffectiveProjectProviders returns the provider list visible to a project.
+// Top-level providers take precedence over legacy project-local providers.
+func GetEffectiveProjectProviders(cfg *Config, projectName string) ([]ProviderConfig, error) {
+	proj, err := findProject(cfg, projectName)
+	if err != nil {
+		return nil, err
+	}
+	return cfg.effectiveProvidersForProject(*proj), nil
+}
+
 // SaveActiveProvider persists the active provider name for a project.
 func SaveActiveProvider(projectName, providerName string) error {
 	configMu.Lock()
@@ -378,15 +466,14 @@ func SaveActiveProvider(projectName, providerName string) error {
 	if err := toml.Unmarshal(data, cfg); err != nil {
 		return fmt.Errorf("parse config: %w", err)
 	}
-	for i := range cfg.Projects {
-		if cfg.Projects[i].Name == projectName {
-			if cfg.Projects[i].Agent.Options == nil {
-				cfg.Projects[i].Agent.Options = make(map[string]any)
-			}
-			cfg.Projects[i].Agent.Options["provider"] = providerName
-			break
-		}
+	proj, err := findProject(cfg, projectName)
+	if err != nil {
+		return err
 	}
+	if proj.Agent.Options == nil {
+		proj.Agent.Options = make(map[string]any)
+	}
+	proj.Agent.Options["provider"] = providerName
 	return saveConfig(cfg)
 }
 
@@ -406,19 +493,16 @@ func SaveProviderModel(projectName, providerName, model string) error {
 		return fmt.Errorf("parse config: %w", err)
 	}
 
-	for i := range cfg.Projects {
-		if cfg.Projects[i].Name != projectName {
-			continue
-		}
-		for j := range cfg.Projects[i].Agent.Providers {
-			if cfg.Projects[i].Agent.Providers[j].Name == providerName {
-				cfg.Projects[i].Agent.Providers[j].Model = model
-				return saveConfig(cfg)
-			}
-		}
-		return fmt.Errorf("provider %q not found in project %q", providerName, projectName)
+	if err := ensureTopLevelProvidersForProject(cfg, projectName); err != nil {
+		return err
 	}
-	return fmt.Errorf("project %q not found in config", projectName)
+	for i := range cfg.Providers {
+		if cfg.Providers[i].Name == providerName {
+			cfg.Providers[i].Model = model
+			return saveConfig(cfg)
+		}
+	}
+	return fmt.Errorf("provider %q not found in project %q", providerName, projectName)
 }
 
 // SaveAgentModel persists the selected default model for a project's agent.
@@ -466,22 +550,15 @@ func AddProviderToConfig(projectName string, provider ProviderConfig) error {
 		return fmt.Errorf("parse config: %w", err)
 	}
 
-	found := false
-	for i := range cfg.Projects {
-		if cfg.Projects[i].Name == projectName {
-			for _, existing := range cfg.Projects[i].Agent.Providers {
-				if existing.Name == provider.Name {
-					return fmt.Errorf("provider %q already exists in project %q", provider.Name, projectName)
-				}
-			}
-			cfg.Projects[i].Agent.Providers = append(cfg.Projects[i].Agent.Providers, provider)
-			found = true
-			break
+	if err := ensureTopLevelProvidersForProject(cfg, projectName); err != nil {
+		return err
+	}
+	for _, existing := range cfg.Providers {
+		if existing.Name == provider.Name {
+			return fmt.Errorf("provider %q already exists in project %q", provider.Name, projectName)
 		}
 	}
-	if !found {
-		return fmt.Errorf("project %q not found in config", projectName)
-	}
+	cfg.Providers = append(cfg.Providers, provider)
 	return saveConfig(cfg)
 }
 
@@ -501,17 +578,14 @@ func RemoveProviderFromConfig(projectName, providerName string) error {
 		return fmt.Errorf("parse config: %w", err)
 	}
 
+	if err := ensureTopLevelProvidersForProject(cfg, projectName); err != nil {
+		return err
+	}
 	found := false
-	for i := range cfg.Projects {
-		if cfg.Projects[i].Name == projectName {
-			providers := cfg.Projects[i].Agent.Providers
-			for j := range providers {
-				if providers[j].Name == providerName {
-					cfg.Projects[i].Agent.Providers = append(providers[:j], providers[j+1:]...)
-					found = true
-					break
-				}
-			}
+	for i := range cfg.Providers {
+		if cfg.Providers[i].Name == providerName {
+			cfg.Providers = append(cfg.Providers[:i], cfg.Providers[i+1:]...)
+			found = true
 			break
 		}
 	}
@@ -815,13 +889,16 @@ func GetProjectProviders(projectName string) ([]ProviderConfig, string, error) {
 	if err := toml.Unmarshal(data, cfg); err != nil {
 		return nil, "", fmt.Errorf("parse config: %w", err)
 	}
-	for _, p := range cfg.Projects {
-		if p.Name == projectName {
-			active, _ := p.Agent.Options["provider"].(string)
-			return p.Agent.Providers, active, nil
-		}
+	proj, err := findProject(cfg, projectName)
+	if err != nil {
+		return nil, "", err
 	}
-	return nil, "", fmt.Errorf("project %q not found", projectName)
+	providers, err := GetEffectiveProjectProviders(cfg, projectName)
+	if err != nil {
+		return nil, "", err
+	}
+	active, _ := proj.Agent.Options["provider"].(string)
+	return providers, active, nil
 }
 
 // FeishuCredentialUpdateOptions controls how Feishu/Lark platform credentials

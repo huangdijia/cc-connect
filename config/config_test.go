@@ -102,6 +102,32 @@ func TestConfigValidate(t *testing.T) {
 				Projects: []ProjectConfig{validProject("demo")},
 			},
 		},
+		{
+			name: "rejects duplicate top level provider names",
+			cfg: Config{
+				Providers: []ProviderConfig{
+					{Name: "openai"},
+					{Name: "openai"},
+				},
+				Projects: []ProjectConfig{validProject("demo")},
+			},
+			wantErr: `duplicate provider name "openai"`,
+		},
+		{
+			name: "rejects unknown active provider against effective list",
+			cfg: Config{
+				Providers: []ProviderConfig{{Name: "openai"}},
+				Projects: []ProjectConfig{
+					func() ProjectConfig {
+						p := validProject("demo")
+						p.Agent.Options["provider"] = "missing"
+						p.Agent.Providers = []ProviderConfig{{Name: "legacy"}}
+						return p
+					}(),
+				},
+			},
+			wantErr: `agent.options.provider "missing" not found in effective providers`,
+		},
 	}
 
 	for _, tt := range tests {
@@ -164,7 +190,7 @@ func TestSaveLanguage(t *testing.T) {
 }
 
 func TestProviderConfig_SaveActiveProviderAndGetProjectProviders(t *testing.T) {
-	writeTestConfig(t, providerConfigTOML)
+	writeTestConfig(t, topLevelProviderConfigTOML)
 
 	if err := SaveActiveProvider("demo", "backup"); err != nil {
 		t.Fatalf("SaveActiveProvider() error: %v", err)
@@ -182,8 +208,44 @@ func TestProviderConfig_SaveActiveProviderAndGetProjectProviders(t *testing.T) {
 	}
 }
 
-func TestProviderConfig_AddAndRemove(t *testing.T) {
+func TestProviderConfig_GetProjectProvidersFallsBackToLegacyProjectProviders(t *testing.T) {
 	writeTestConfig(t, providerConfigTOML)
+
+	providers, active, err := GetProjectProviders("demo")
+	if err != nil {
+		t.Fatalf("GetProjectProviders() error: %v", err)
+	}
+	if active != "primary" {
+		t.Fatalf("active provider = %q, want primary", active)
+	}
+	if len(providers) != 2 {
+		t.Fatalf("provider count = %d, want 2", len(providers))
+	}
+	if providers[0].Name != "primary" || providers[1].Name != "backup" {
+		t.Fatalf("providers = %#v, want legacy providers", providers)
+	}
+}
+
+func TestProviderConfig_TopLevelProvidersTakePrecedenceOverLegacyProjectProviders(t *testing.T) {
+	writeTestConfig(t, mixedProviderConfigTOML)
+
+	providers, active, err := GetProjectProviders("demo")
+	if err != nil {
+		t.Fatalf("GetProjectProviders() error: %v", err)
+	}
+	if active != "shared-primary" {
+		t.Fatalf("active provider = %q, want shared-primary", active)
+	}
+	if len(providers) != 2 {
+		t.Fatalf("provider count = %d, want 2", len(providers))
+	}
+	if providers[0].Name != "shared-primary" || providers[1].Name != "shared-backup" {
+		t.Fatalf("providers = %#v, want top-level providers", providers)
+	}
+}
+
+func TestProviderConfig_AddAndRemove(t *testing.T) {
+	writeTestConfig(t, topLevelProviderConfigTOML)
 
 	newProvider := ProviderConfig{Name: "relay", APIKey: "sk-relay", BaseURL: "https://example.com"}
 	if err := AddProviderToConfig("demo", newProvider); err != nil {
@@ -194,8 +256,8 @@ func TestProviderConfig_AddAndRemove(t *testing.T) {
 	}
 
 	cfg := readTestConfig(t)
-	if len(cfg.Projects[0].Agent.Providers) != 3 {
-		t.Fatalf("provider count after add = %d, want 3", len(cfg.Projects[0].Agent.Providers))
+	if len(cfg.Providers) != 3 {
+		t.Fatalf("provider count after add = %d, want 3", len(cfg.Providers))
 	}
 
 	if err := RemoveProviderFromConfig("demo", "relay"); err != nil {
@@ -206,15 +268,37 @@ func TestProviderConfig_AddAndRemove(t *testing.T) {
 	}
 }
 
-func TestProviderConfig_SaveProviderModel(t *testing.T) {
+func TestProviderConfig_WritesPromoteLegacyProjectProvidersToTopLevel(t *testing.T) {
 	writeTestConfig(t, providerConfigTOML)
+
+	if err := AddProviderToConfig("demo", ProviderConfig{Name: "relay", APIKey: "sk-relay"}); err != nil {
+		t.Fatalf("AddProviderToConfig() error: %v", err)
+	}
+	if err := SaveProviderModel("demo", "primary", "gpt-5.4"); err != nil {
+		t.Fatalf("SaveProviderModel() error: %v", err)
+	}
+
+	cfg := readTestConfig(t)
+	if len(cfg.Providers) != 3 {
+		t.Fatalf("top-level provider count = %d, want 3", len(cfg.Providers))
+	}
+	if got := cfg.Providers[0].Model; got != "gpt-5.4" {
+		t.Fatalf("cfg.Providers[0].Model = %q, want gpt-5.4", got)
+	}
+	if len(cfg.Projects[0].Agent.Providers) != 2 {
+		t.Fatalf("legacy project provider count = %d, want unchanged 2", len(cfg.Projects[0].Agent.Providers))
+	}
+}
+
+func TestProviderConfig_SaveProviderModel(t *testing.T) {
+	writeTestConfig(t, topLevelProviderConfigTOML)
 
 	if err := SaveProviderModel("demo", "primary", "gpt-5.4"); err != nil {
 		t.Fatalf("SaveProviderModel() error: %v", err)
 	}
 
 	cfg := readTestConfig(t)
-	if got := cfg.Projects[0].Agent.Providers[0].Model; got != "gpt-5.4" {
+	if got := cfg.Providers[0].Model; got != "gpt-5.4" {
 		t.Fatalf("provider model = %q, want gpt-5.4", got)
 	}
 	if err := SaveProviderModel("demo", "missing", "gpt-4.1"); err == nil {
@@ -223,7 +307,7 @@ func TestProviderConfig_SaveProviderModel(t *testing.T) {
 }
 
 func TestSaveAgentModel(t *testing.T) {
-	writeTestConfig(t, providerConfigTOML)
+	writeTestConfig(t, topLevelProviderConfigTOML)
 
 	if err := SaveAgentModel("demo", "gpt-5.4"); err != nil {
 		t.Fatalf("SaveAgentModel() error: %v", err)
@@ -239,8 +323,8 @@ func TestSaveAgentModel(t *testing.T) {
 	if got, _ := cfg.Projects[0].Agent.Options["provider"].(string); got != "primary" {
 		t.Fatalf("agent.options.provider = %q, want primary", got)
 	}
-	if len(cfg.Projects[0].Agent.Providers) != 2 {
-		t.Fatalf("provider count = %d, want 2", len(cfg.Projects[0].Agent.Providers))
+	if len(cfg.Providers) != 2 {
+		t.Fatalf("provider count = %d, want 2", len(cfg.Providers))
 	}
 }
 
@@ -799,6 +883,66 @@ type = "telegram"
 token = "test-token"
 `
 
+const topLevelProviderConfigTOML = `
+[[providers]]
+name = "primary"
+api_key = "sk-primary"
+
+[[providers]]
+name = "backup"
+api_key = "sk-backup"
+
+[[projects]]
+name = "demo"
+
+[projects.agent]
+type = "claudecode"
+
+[projects.agent.options]
+mode = "default"
+provider = "primary"
+
+[[projects.platforms]]
+type = "telegram"
+
+[projects.platforms.options]
+token = "test-token"
+`
+
+const mixedProviderConfigTOML = `
+[[providers]]
+name = "shared-primary"
+api_key = "sk-shared-primary"
+
+[[providers]]
+name = "shared-backup"
+api_key = "sk-shared-backup"
+
+[[projects]]
+name = "demo"
+
+[projects.agent]
+type = "claudecode"
+
+[projects.agent.options]
+mode = "default"
+provider = "shared-primary"
+
+[[projects.agent.providers]]
+name = "primary"
+api_key = "sk-primary"
+
+[[projects.agent.providers]]
+name = "backup"
+api_key = "sk-backup"
+
+[[projects.platforms]]
+type = "telegram"
+
+[projects.platforms.options]
+token = "test-token"
+`
+
 const feishuConfigFixture = `
 [[projects]]
 name = "alpha"
@@ -899,10 +1043,10 @@ func TestValidateUsersConfig(t *testing.T) {
 			name: "nil users is valid",
 			cfg: Config{
 				Projects: []ProjectConfig{{
-					Name: "p1",
-					Agent: AgentConfig{Type: "codex"},
+					Name:      "p1",
+					Agent:     AgentConfig{Type: "codex"},
 					Platforms: []PlatformConfig{{Type: "telegram", Options: map[string]any{"token": "x"}}},
-					Users: nil,
+					Users:     nil,
 				}},
 			},
 			wantErr: "",
@@ -911,10 +1055,10 @@ func TestValidateUsersConfig(t *testing.T) {
 			name: "empty roles",
 			cfg: Config{
 				Projects: []ProjectConfig{{
-					Name: "p1",
-					Agent: AgentConfig{Type: "codex"},
+					Name:      "p1",
+					Agent:     AgentConfig{Type: "codex"},
 					Platforms: []PlatformConfig{{Type: "telegram", Options: map[string]any{"token": "x"}}},
-					Users: &UsersConfig{Roles: map[string]RoleConfig{}},
+					Users:     &UsersConfig{Roles: map[string]RoleConfig{}},
 				}},
 			},
 			wantErr: `no roles defined`,
@@ -923,8 +1067,8 @@ func TestValidateUsersConfig(t *testing.T) {
 			name: "empty user_ids in role",
 			cfg: Config{
 				Projects: []ProjectConfig{{
-					Name: "p1",
-					Agent: AgentConfig{Type: "codex"},
+					Name:      "p1",
+					Agent:     AgentConfig{Type: "codex"},
 					Platforms: []PlatformConfig{{Type: "telegram", Options: map[string]any{"token": "x"}}},
 					Users: &UsersConfig{
 						Roles: map[string]RoleConfig{
@@ -939,13 +1083,13 @@ func TestValidateUsersConfig(t *testing.T) {
 			name: "duplicate user in different roles",
 			cfg: Config{
 				Projects: []ProjectConfig{{
-					Name: "p1",
-					Agent: AgentConfig{Type: "codex"},
+					Name:      "p1",
+					Agent:     AgentConfig{Type: "codex"},
 					Platforms: []PlatformConfig{{Type: "telegram", Options: map[string]any{"token": "x"}}},
 					Users: &UsersConfig{
 						Roles: map[string]RoleConfig{
-							"admin":   {UserIDs: []string{"user1"}},
-							"member":  {UserIDs: []string{"user1"}},
+							"admin":  {UserIDs: []string{"user1"}},
+							"member": {UserIDs: []string{"user1"}},
 						},
 					},
 				}},
@@ -956,8 +1100,8 @@ func TestValidateUsersConfig(t *testing.T) {
 			name: "wildcard in multiple roles",
 			cfg: Config{
 				Projects: []ProjectConfig{{
-					Name: "p1",
-					Agent: AgentConfig{Type: "codex"},
+					Name:      "p1",
+					Agent:     AgentConfig{Type: "codex"},
 					Platforms: []PlatformConfig{{Type: "telegram", Options: map[string]any{"token": "x"}}},
 					Users: &UsersConfig{
 						Roles: map[string]RoleConfig{
@@ -973,8 +1117,8 @@ func TestValidateUsersConfig(t *testing.T) {
 			name: "default_role not matching any role",
 			cfg: Config{
 				Projects: []ProjectConfig{{
-					Name: "p1",
-					Agent: AgentConfig{Type: "codex"},
+					Name:      "p1",
+					Agent:     AgentConfig{Type: "codex"},
 					Platforms: []PlatformConfig{{Type: "telegram", Options: map[string]any{"token": "x"}}},
 					Users: &UsersConfig{
 						DefaultRole: "superadmin",
@@ -990,8 +1134,8 @@ func TestValidateUsersConfig(t *testing.T) {
 			name: "valid users config",
 			cfg: Config{
 				Projects: []ProjectConfig{{
-					Name: "p1",
-					Agent: AgentConfig{Type: "codex"},
+					Name:      "p1",
+					Agent:     AgentConfig{Type: "codex"},
 					Platforms: []PlatformConfig{{Type: "telegram", Options: map[string]any{"token": "x"}}},
 					Users: &UsersConfig{
 						DefaultRole: "member",
@@ -1008,8 +1152,8 @@ func TestValidateUsersConfig(t *testing.T) {
 			name: "valid with wildcard in one role only",
 			cfg: Config{
 				Projects: []ProjectConfig{{
-					Name: "p1",
-					Agent: AgentConfig{Type: "codex"},
+					Name:      "p1",
+					Agent:     AgentConfig{Type: "codex"},
 					Platforms: []PlatformConfig{{Type: "telegram", Options: map[string]any{"token": "x"}}},
 					Users: &UsersConfig{
 						Roles: map[string]RoleConfig{
@@ -1173,7 +1317,7 @@ func TestCloneAgentConfig(t *testing.T) {
 			t.Fatalf("Providers length = %d, want 1", len(got.Providers))
 		}
 		p := got.Providers[0]
-		if p.Name != "openai" || p.APIKey != "sk-test" || p.BaseURL != "https://api.openai.com" || p.Model != "gpt-4"  {
+		if p.Name != "openai" || p.APIKey != "sk-test" || p.BaseURL != "https://api.openai.com" || p.Model != "gpt-4" {
 			t.Errorf("Provider fields not cloned correctly: %+v", p)
 		}
 		if p.Env["DEBUG"] != "1" {
