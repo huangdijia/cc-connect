@@ -2934,12 +2934,26 @@ func resolveSessionSubCommand(input string) string {
 	}
 }
 
+func resolveSessionPolicyCommand(input string) (cmdID, display string, ok bool) {
+	subCmd := resolveSessionSubCommand(input)
+	switch subCmd {
+	case "new", "list", "search", "switch", "current", "history", "delete":
+		return subCmd, "/session " + subCmd, true
+	case "rename":
+		return "name", "/session rename", true
+	default:
+		return "", "", false
+	}
+}
+
 func (e *Engine) handleCommand(p Platform, msg *Message, raw string) bool {
 	parts := strings.Fields(raw)
 	cmd := strings.ToLower(strings.TrimPrefix(parts[0], "/"))
 	args := parts[1:]
 
 	cmdID := matchPrefix(cmd, builtinCommands)
+	policyCmdID := cmdID
+	policyCmdDisplay := "/" + cmdID
 
 	// Resolve effective disabled commands: role-based if available, else project-level
 	e.userRolesMu.RLock()
@@ -2952,11 +2966,26 @@ func (e *Engine) handleCommand(p Platform, msg *Message, raw string) bool {
 		}
 	}
 
+	if cmdID == "session" && len(args) > 0 {
+		if resolvedID, resolvedDisplay, ok := resolveSessionPolicyCommand(args[0]); ok {
+			policyCmdID = resolvedID
+			policyCmdDisplay = resolvedDisplay
+		}
+	}
+
 	if cmdID != "" && disabledCmds[cmdID] {
 		slog.Info("audit: command_blocked",
 			"user_id", msg.UserID, "platform", msg.Platform,
 			"project", e.name, "command", cmdID, "reason", "disabled")
 		e.reply(p, msg.ReplyCtx, fmt.Sprintf(e.i18n.T(MsgCommandDisabled), "/"+cmdID))
+		return true
+	}
+
+	if policyCmdID != "" && policyCmdID != cmdID && disabledCmds[policyCmdID] {
+		slog.Info("audit: command_blocked",
+			"user_id", msg.UserID, "platform", msg.Platform,
+			"project", e.name, "command", cmdID, "subcommand", policyCmdID, "reason", "disabled")
+		e.reply(p, msg.ReplyCtx, fmt.Sprintf(e.i18n.T(MsgCommandDisabled), policyCmdDisplay))
 		return true
 	}
 
@@ -2968,10 +2997,24 @@ func (e *Engine) handleCommand(p Platform, msg *Message, raw string) bool {
 		return true
 	}
 
-	if cmdID != "" {
-		slog.Info("audit: command_executed",
+	if policyCmdID != "" && policyCmdID != cmdID && privilegedCommands[policyCmdID] && !e.isAdmin(msg.UserID) {
+		slog.Info("audit: command_blocked",
 			"user_id", msg.UserID, "platform", msg.Platform,
-			"project", e.name, "command", cmdID)
+			"project", e.name, "command", cmdID, "subcommand", policyCmdID, "reason", "unauthorized")
+		e.reply(p, msg.ReplyCtx, fmt.Sprintf(e.i18n.T(MsgAdminRequired), policyCmdDisplay))
+		return true
+	}
+
+	if cmdID != "" {
+		if policyCmdID != "" && policyCmdID != cmdID {
+			slog.Info("audit: command_executed",
+				"user_id", msg.UserID, "platform", msg.Platform,
+				"project", e.name, "command", cmdID, "subcommand", policyCmdID)
+		} else {
+			slog.Info("audit: command_executed",
+				"user_id", msg.UserID, "platform", msg.Platform,
+				"project", e.name, "command", cmdID)
+		}
 	}
 
 	switch cmdID {

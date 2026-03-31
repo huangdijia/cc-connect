@@ -1267,6 +1267,55 @@ func TestEngine_DisabledCommandsWildcard(t *testing.T) {
 	}
 }
 
+func TestEngine_DisabledCommands_BlockSessionSubcommand(t *testing.T) {
+	p := &stubPlatformEngine{n: "test"}
+	agent := &stubDeleteAgent{stubListAgent: stubListAgent{sessions: []AgentSessionInfo{
+		{ID: "session-1", Summary: "One"},
+	}}}
+	e := NewEngine("test", agent, []Platform{p}, "", LangEnglish)
+	e.SetDisabledCommands([]string{"delete"})
+
+	msg := &Message{SessionKey: "test:ch:user1", UserID: "user1", Content: "/session delete 1", ReplyCtx: "ctx"}
+	e.handleCommand(p, msg, msg.Content)
+
+	if len(agent.deleted) != 0 {
+		t.Fatalf("expected /session delete to be blocked, deleted=%v", agent.deleted)
+	}
+	if len(p.sent) != 1 {
+		t.Fatalf("expected 1 reply, got %d", len(p.sent))
+	}
+	if !strings.Contains(p.sent[0], "/session delete") {
+		t.Fatalf("expected disabled reply to mention /session delete, got %q", p.sent[0])
+	}
+}
+
+func TestEngine_UserRoleDisabledCommands_BlockSessionSubcommand(t *testing.T) {
+	p := &stubPlatformEngine{n: "test"}
+	agent := &stubDeleteAgent{stubListAgent: stubListAgent{sessions: []AgentSessionInfo{
+		{ID: "session-1", Summary: "One"},
+	}}}
+	e := NewEngine("test", agent, []Platform{p}, "", LangEnglish)
+
+	urm := NewUserRoleManager()
+	urm.Configure("member", []RoleInput{
+		{Name: "member", UserIDs: []string{"*"}, DisabledCommands: []string{"delete"}},
+	})
+	e.SetUserRoles(urm)
+
+	msg := &Message{SessionKey: "test:ch:user1", UserID: "user1", Content: "/session delete 1", ReplyCtx: "ctx"}
+	e.handleCommand(p, msg, msg.Content)
+
+	if len(agent.deleted) != 0 {
+		t.Fatalf("expected role policy to block /session delete, deleted=%v", agent.deleted)
+	}
+	if len(p.sent) != 1 {
+		t.Fatalf("expected 1 reply, got %d", len(p.sent))
+	}
+	if !strings.Contains(p.sent[0], "/session delete") {
+		t.Fatalf("expected disabled reply to mention /session delete, got %q", p.sent[0])
+	}
+}
+
 // --- admin_from tests ---
 
 func TestEngine_AdminFrom_DenyByDefault(t *testing.T) {
