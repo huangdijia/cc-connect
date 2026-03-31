@@ -267,11 +267,14 @@ cc-connect update --pre     # Beta 版（含 pre-release）
 ### 💬 会话管理
 
 ```
-/new [名称]            创建新会话
-/list                  列出所有会话
-/switch <id>           切换会话
-/current               查看当前会话
-/dir [路径|reset]      查看、切换或重置工作目录
+/session new [名称]          创建新会话
+/session list [页码]         列出所有会话
+/session switch <id>         切换会话
+/session current             查看当前会话
+/session history [n]         查看最近消息
+/session rename <名称>       重命名当前会话
+/session delete <id>         删除会话
+/dir [路径|reset]            查看、切换或重置工作目录
 ```
 
 项目配置也可以开启“长时间空闲后自动切到新会话”：

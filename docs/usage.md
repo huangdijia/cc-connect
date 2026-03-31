@@ -31,11 +31,11 @@ Each user gets an independent session with full conversation context. Manage ses
 
 | Command | Description |
 |---------|-------------|
-| `/new [name]` | Start a new session |
-| `/list` | List all agent sessions for this project |
-| `/switch <id>` | Switch to a different session |
-| `/current` | Show current session info |
-| `/history [n]` | Show last n messages (default 10) |
+| `/session new [name]` | Start a new session |
+| `/session list [page]` | List all agent sessions for this project |
+| `/session switch <id>` | Switch to a different session |
+| `/session current` | Show current session info |
+| `/session history [n]` | Show last n messages (default 10) |
 | `/usage` | Show account/model quota usage (if supported) |
 | `/provider [...]` | Manage API providers |
 | `/model [switch <alias>]` | List available models or switch by alias |

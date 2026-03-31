@@ -2807,6 +2807,7 @@ var builtinCommands = []struct {
 	names []string
 	id    string
 }{
+	{[]string{"session"}, "session"},
 	{[]string{"new"}, "new"},
 	{[]string{"list", "sessions"}, "list"},
 	{[]string{"switch"}, "switch"},
@@ -2919,6 +2920,20 @@ func matchSubCommand(input string, candidates []string) string {
 	return input
 }
 
+var sessionCommandNames = []string{"new", "list", "search", "switch", "rename", "current", "history", "delete"}
+
+func resolveSessionSubCommand(input string) string {
+	input = strings.ToLower(strings.TrimSpace(input))
+	switch input {
+	case "name":
+		return "rename"
+	case "del", "rm":
+		return "delete"
+	default:
+		return matchSubCommand(input, sessionCommandNames)
+	}
+}
+
 func (e *Engine) handleCommand(p Platform, msg *Message, raw string) bool {
 	parts := strings.Fields(raw)
 	cmd := strings.ToLower(strings.TrimPrefix(parts[0], "/"))
@@ -2960,6 +2975,8 @@ func (e *Engine) handleCommand(p Platform, msg *Message, raw string) bool {
 	}
 
 	switch cmdID {
+	case "session":
+		e.cmdSession(p, msg, args)
 	case "new":
 		e.cmdNew(p, msg, args)
 	case "list":
@@ -3321,6 +3338,45 @@ func (e *Engine) cmdNew(p Platform, msg *Message, args []string) {
 		e.reply(p, msg.ReplyCtx, fmt.Sprintf(e.i18n.T(MsgNewSessionCreatedName), name))
 	} else {
 		e.reply(p, msg.ReplyCtx, e.i18n.T(MsgNewSessionCreated))
+	}
+}
+
+func (e *Engine) cmdSession(p Platform, msg *Message, args []string) {
+	if len(args) == 0 {
+		if supportsCards(p) {
+			e.replyWithCard(p, msg.ReplyCtx, e.renderHelpGroupCard(defaultHelpGroup))
+			return
+		}
+		e.reply(p, msg.ReplyCtx, e.i18n.T(MsgHelpSessionSection))
+		return
+	}
+
+	subCmd := resolveSessionSubCommand(args[0])
+	subArgs := args[1:]
+
+	switch subCmd {
+	case "new":
+		e.cmdNew(p, msg, subArgs)
+	case "list":
+		e.cmdList(p, msg, subArgs)
+	case "search":
+		e.cmdSearch(p, msg, subArgs)
+	case "switch":
+		e.cmdSwitch(p, msg, subArgs)
+	case "rename":
+		e.cmdName(p, msg, subArgs)
+	case "current":
+		e.cmdCurrent(p, msg)
+	case "history":
+		e.cmdHistory(p, msg, subArgs)
+	case "delete":
+		e.cmdDelete(p, msg, subArgs)
+	default:
+		if supportsCards(p) {
+			e.replyWithCard(p, msg.ReplyCtx, e.renderHelpGroupCard(defaultHelpGroup))
+			return
+		}
+		e.reply(p, msg.ReplyCtx, e.i18n.T(MsgHelpSessionSection))
 	}
 }
 
@@ -4623,14 +4679,14 @@ func helpCardGroups() []helpCardGroup {
 			key:      "session",
 			titleKey: MsgHelpSessionSection,
 			items: []helpCardItem{
-				{command: "/new", action: "act:/new"},
-				{command: "/list", action: "nav:/list"},
-				{command: "/current", action: "nav:/current"},
-				{command: "/switch", action: "nav:/list"},
-				{command: "/search", action: "cmd:/search"},
-				{command: "/history", action: "nav:/history"},
-				{command: "/delete", action: "cmd:/delete"},
-				{command: "/name", action: "cmd:/name"},
+				{command: "/session new", action: "act:/session new"},
+				{command: "/session list", action: "nav:/session list"},
+				{command: "/session current", action: "nav:/session current"},
+				{command: "/session switch", action: "nav:/session list"},
+				{command: "/session search", action: "cmd:/session search"},
+				{command: "/session history", action: "nav:/session history"},
+				{command: "/session delete", action: "cmd:/session delete"},
+				{command: "/session rename", action: "cmd:/session rename"},
 			},
 		},
 		{
@@ -4714,7 +4770,14 @@ func (e *Engine) renderHelpGroupCard(groupKey string) *Card {
 		return strings.Trim(sectionTitle(key), "* ")
 	}
 	commandText := func(command string) string {
-		return "**" + command + "**  " + e.i18n.T(MsgKey(strings.TrimPrefix(command, "/")))
+		descKey := strings.TrimPrefix(command, "/")
+		if strings.HasPrefix(descKey, "session ") {
+			parts := strings.Fields(descKey)
+			if len(parts) > 1 {
+				descKey = parts[1]
+			}
+		}
+		return "**" + command + "**  " + e.i18n.T(MsgKey(descKey))
 	}
 
 	groups := helpCardGroups()
@@ -6205,6 +6268,8 @@ func (e *Engine) handleCardNav(action string, sessionKey string) *Card {
 	}
 
 	switch cmd {
+	case "/session":
+		return e.renderSessionCommandCard(sessionKey, args)
 	case "/help":
 		return e.renderHelpGroupCard(args)
 	case "/model":
@@ -6284,6 +6349,20 @@ func (e *Engine) handleCardNav(action string, sessionKey string) *Card {
 // (e.g. switching model/mode/lang) before the card is re-rendered.
 func (e *Engine) executeCardAction(cmd, args, sessionKey string) {
 	switch cmd {
+	case "/session":
+		parts := strings.Fields(args)
+		if len(parts) == 0 {
+			return
+		}
+		subCmd := resolveSessionSubCommand(parts[0])
+		subArgs := strings.Join(parts[1:], " ")
+		switch subCmd {
+		case "new":
+			e.executeCardAction("/new", subArgs, sessionKey)
+		case "switch":
+			e.executeCardAction("/switch", subArgs, sessionKey)
+		}
+		return
 	case "/model":
 		if args == "" {
 			return
@@ -6684,7 +6763,7 @@ func (e *Engine) renderDeleteModeResultCard(dm *deleteModeState) *Card {
 	return NewCard().
 		Title(e.i18n.T(MsgDeleteModeResultTitle), "turquoise").
 		Markdown(dm.result).
-		Buttons(DefaultBtn(e.i18n.T(MsgCardBack), "nav:/list 1")).
+		Buttons(DefaultBtn(e.i18n.T(MsgCardBack), "nav:/session list 1")).
 		Build()
 }
 
@@ -7034,17 +7113,17 @@ func (e *Engine) renderListCard(sessionKey string, page int) (*Card, error) {
 			e.i18n.Tf(MsgListItem, marker, i+1, displayName, s.MessageCount, s.ModifiedAt.Format("01-02 15:04")),
 			fmt.Sprintf("#%d", i+1),
 			btnType,
-			fmt.Sprintf("act:/switch %d", i+1),
+			fmt.Sprintf("act:/session switch %d", i+1),
 		)
 	}
 
 	var navBtns []CardButton
 	if page > 1 {
-		navBtns = append(navBtns, e.cardPrevButton(fmt.Sprintf("nav:/list %d", page-1)))
+		navBtns = append(navBtns, e.cardPrevButton(fmt.Sprintf("nav:/session list %d", page-1)))
 	}
 	navBtns = append(navBtns, e.cardBackButton())
 	if page < totalPages {
-		navBtns = append(navBtns, e.cardNextButton(fmt.Sprintf("nav:/list %d", page+1)))
+		navBtns = append(navBtns, e.cardNextButton(fmt.Sprintf("nav:/session list %d", page+1)))
 	}
 	cb.Buttons(navBtns...)
 
@@ -7053,6 +7132,39 @@ func (e *Engine) renderListCard(sessionKey string, page int) (*Card, error) {
 	}
 
 	return cb.Build(), nil
+}
+
+func (e *Engine) renderSessionCommandCard(sessionKey, args string) *Card {
+	parts := strings.Fields(args)
+	if len(parts) == 0 {
+		return e.renderHelpGroupCard(defaultHelpGroup)
+	}
+
+	subCmd := resolveSessionSubCommand(parts[0])
+	subArgs := parts[1:]
+
+	switch subCmd {
+	case "new":
+		return e.renderCurrentCard(sessionKey)
+	case "list":
+		page := 1
+		if len(subArgs) > 0 {
+			if n, err := strconv.Atoi(subArgs[0]); err == nil && n > 0 {
+				page = n
+			}
+		}
+		return e.renderListCardSafe(sessionKey, page)
+	case "current":
+		return e.renderCurrentCard(sessionKey)
+	case "history":
+		return e.renderHistoryCard(sessionKey)
+	case "switch":
+		return e.renderListCardSafe(sessionKey, 1)
+	case "delete":
+		return e.renderDeleteModeCard(sessionKey)
+	default:
+		return e.renderHelpGroupCard(defaultHelpGroup)
+	}
 }
 
 // dirCardTruncPath shortens absolute paths for card list rows.

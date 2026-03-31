@@ -2608,7 +2608,7 @@ func TestDeleteMode_CancelReturnsListCard(t *testing.T) {
 	if card == nil {
 		t.Fatal("expected list card after cancel")
 	}
-	if got := countCardActionValues(card, "act:/switch "); got != 2 {
+	if got := countCardActionValues(card, "act:/session switch "); got != 2 {
 		t.Fatalf("switch action count = %d, want 2", got)
 	}
 }
@@ -3779,11 +3779,11 @@ func TestRenderListCard_MakesEveryVisibleSessionClickable(t *testing.T) {
 		t.Fatalf("renderListCard returned error: %v", err)
 	}
 
-	if got := countCardActionValues(card, "act:/switch "); got != len(sessions) {
+	if got := countCardActionValues(card, "act:/session switch "); got != len(sessions) {
 		t.Fatalf("switch action count = %d, want %d", got, len(sessions))
 	}
 
-	btn, ok := findCardAction(card, "act:/switch 6")
+	btn, ok := findCardAction(card, "act:/session switch 6")
 	if !ok {
 		t.Fatal("expected active session switch action to exist")
 	}
@@ -3865,7 +3865,7 @@ func TestRenderHelpCard_DefaultsToSessionTab(t *testing.T) {
 	if btn.Text != "Session Management" {
 		t.Fatalf("session help tab text = %q, want full title", btn.Text)
 	}
-	if !strings.Contains(text, "**/new**") {
+	if !strings.Contains(text, "**/session new**") {
 		t.Fatalf("default help text = %q, want session commands", text)
 	}
 	if strings.Contains(text, "**Session Management**") {
@@ -3891,7 +3891,7 @@ func TestHandleCardNav_HelpSwitchesTabs(t *testing.T) {
 	if strings.Contains(text, "**Agent Configuration**") {
 		t.Fatalf("agent help text = %q, should not repeat tab title in body", text)
 	}
-	if strings.Contains(text, "**/new**") {
+	if strings.Contains(text, "**/session new**") {
 		t.Fatalf("agent help text = %q, should not include session commands", text)
 	}
 }
@@ -6264,6 +6264,26 @@ func TestExecuteCardAction_NewCleansUpAndCreatesSession(t *testing.T) {
 	}
 }
 
+func TestExecuteCardAction_SessionNewDelegatesToNew(t *testing.T) {
+	p := &stubPlatformEngine{n: "test"}
+	e := NewEngine("test", &stubAgent{}, []Platform{p}, "", LangEnglish)
+	key := "test:user1"
+
+	e.interactiveMu.Lock()
+	e.interactiveStates[key] = &interactiveState{agentSession: newControllableSession("old")}
+	e.interactiveMu.Unlock()
+
+	e.executeCardAction("/session", "new", key)
+
+	e.interactiveMu.Lock()
+	_, exists := e.interactiveStates[key]
+	e.interactiveMu.Unlock()
+
+	if exists {
+		t.Error("expected old interactive state to be cleaned up after /session new")
+	}
+}
+
 func TestExecuteCardAction_LangSwitch(t *testing.T) {
 	e := newTestEngine()
 
@@ -7277,6 +7297,22 @@ func TestCmdSwitch_NoArgs_ShowsUsage(t *testing.T) {
 	}
 }
 
+func TestCmdSession_NoArgs_ShowsSessionHelpOnPlainPlatform(t *testing.T) {
+	p := &stubPlatformEngine{n: "test"}
+	e := NewEngine("test", &stubAgent{}, []Platform{p}, "", LangEnglish)
+
+	msg := &Message{SessionKey: "test:ch:user1", Content: "/session", ReplyCtx: "ctx"}
+	e.handleCommand(p, msg, msg.Content)
+
+	sent := p.getSent()
+	if len(sent) == 0 {
+		t.Fatal("expected session help reply")
+	}
+	if !strings.Contains(sent[0], "/session new") || !strings.Contains(sent[0], "/session list") {
+		t.Fatalf("expected session help reply, got %v", sent)
+	}
+}
+
 func TestCmdSwitch_ByIndex_SetsSession(t *testing.T) {
 	p := &stubPlatformEngine{n: "test"}
 	agent := &switchableAgent{
@@ -7320,6 +7356,26 @@ func TestCmdSwitch_ByIndex_SetsSession(t *testing.T) {
 	session := e.sessions.GetOrCreateActive(key)
 	if id := session.GetAgentSessionID(); id != "sess-bbb" {
 		t.Errorf("expected session ID sess-bbb, got %q", id)
+	}
+}
+
+func TestCmdSession_SwitchByPrefixDispatchesToSwitch(t *testing.T) {
+	p := &stubPlatformEngine{n: "test"}
+	agent := &switchableAgent{
+		sessions: []AgentSessionInfo{
+			{ID: "sess-aaa", Summary: "First session", MessageCount: 5},
+			{ID: "sess-bbb", Summary: "Second session", MessageCount: 3},
+		},
+	}
+	e := NewEngine("test", agent, []Platform{p}, "", LangEnglish)
+
+	key := "test:ch:user1"
+	msg := &Message{SessionKey: key, Content: "/session sw 2", ReplyCtx: "ctx"}
+	e.handleCommand(p, msg, msg.Content)
+
+	session := e.sessions.GetOrCreateActive(key)
+	if id := session.GetAgentSessionID(); id != "sess-bbb" {
+		t.Fatalf("expected session ID sess-bbb, got %q", id)
 	}
 }
 
@@ -7397,6 +7453,36 @@ func TestCmdSwitch_ByName(t *testing.T) {
 	}
 	if !foundSwitch {
 		t.Fatalf("expected switch by name to succeed, got %v", sent)
+	}
+}
+
+func TestCmdSession_NameAliasDispatchesToRename(t *testing.T) {
+	p := &stubPlatformEngine{n: "test"}
+	e := NewEngine("test", &stubAgent{}, []Platform{p}, "", LangEnglish)
+
+	key := "test:ch:user1"
+	e.sessions.GetOrCreateActive(key).SetAgentSessionID("sess-current", "test")
+
+	msg := &Message{SessionKey: key, Content: "/session name feature branch", ReplyCtx: "ctx"}
+	e.handleCommand(p, msg, msg.Content)
+
+	if got := e.sessions.GetSessionName("sess-current"); got != "feature branch" {
+		t.Fatalf("session name = %q, want %q", got, "feature branch")
+	}
+}
+
+func TestCmdSession_DeleteAliasDispatchesToDelete(t *testing.T) {
+	p := &stubPlatformEngine{n: "test"}
+	agent := &stubDeleteAgent{stubListAgent: stubListAgent{sessions: []AgentSessionInfo{
+		{ID: "session-1", Summary: "One"},
+	}}}
+	e := NewEngine("test", agent, []Platform{p}, "", LangEnglish)
+
+	msg := &Message{SessionKey: "test:ch:user1", Content: "/session rm 1", ReplyCtx: "ctx"}
+	e.handleCommand(p, msg, msg.Content)
+
+	if got := strings.Join(agent.deleted, ","); got != "session-1" {
+		t.Fatalf("deleted = %q, want %q", got, "session-1")
 	}
 }
 
