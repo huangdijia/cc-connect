@@ -34,6 +34,7 @@ type Agent struct {
 	model      string
 	mode       string
 	cmd        string // CLI binary name, default "agent"
+	sandbox    string // "enabled", "disabled", or "" (let CLI decide)
 	providers  []core.ProviderConfig
 	activeIdx  int
 	sessionEnv []string
@@ -52,6 +53,8 @@ func New(opts map[string]any) (core.Agent, error) {
 	if cmd == "" {
 		cmd = "agent"
 	}
+	sandbox := normalizeSandbox(opts["sandbox"])
+
 	if _, err := exec.LookPath(cmd); err != nil {
 		return nil, fmt.Errorf("cursor: %q CLI not found in PATH, install with: npm i -g @anthropic-ai/cursor-agent (or from Cursor IDE settings)", cmd)
 	}
@@ -61,6 +64,7 @@ func New(opts map[string]any) (core.Agent, error) {
 		model:     model,
 		mode:      mode,
 		cmd:       cmd,
+		sandbox:   sandbox,
 		activeIdx: -1,
 	}, nil
 }
@@ -78,6 +82,17 @@ func normalizeMode(raw string) string {
 	}
 }
 
+func normalizeSandbox(v any) string {
+	s, _ := v.(string)
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "enabled", "on", "true", "1":
+		return "enabled"
+	case "disabled", "off", "false", "0":
+		return "disabled"
+	default:
+		return ""
+	}
+}
 
 func (a *Agent) Name() string           { return "cursor" }
 func (a *Agent) CLIBinaryName() string  { return "agent" }
@@ -202,7 +217,7 @@ func (a *Agent) StartSession(ctx context.Context, sessionID string) (core.AgentS
 	}
 	a.mu.Unlock()
 
-	return newCursorSession(ctx, cmd, a.workDir, model, mode, sessionID, extraEnv)
+	return newCursorSession(ctx, cmd, a.workDir, model, mode, a.sandbox, sessionID, extraEnv)
 }
 
 // ListSessions reads sessions from ~/.cursor/chats/<workspace_hash>/.
