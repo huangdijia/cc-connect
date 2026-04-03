@@ -332,6 +332,9 @@ func (c *Config) validate() error {
 		if active := stringOption(proj.Agent.Options["provider"]); active != "" && !hasProviderNamed(c.effectiveProvidersForProject(proj), active) {
 			return fmt.Errorf("config: %s.agent.options.provider %q not found in effective providers", prefix, active)
 		}
+		if proj.ResetOnIdleMins != nil && *proj.ResetOnIdleMins < 0 {
+			return fmt.Errorf("config: %s.reset_on_idle_mins must be >= 0", prefix)
+		}
 		if err := validateUsersConfig(prefix, proj.Users); err != nil {
 			return err
 		}
