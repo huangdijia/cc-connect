@@ -286,6 +286,13 @@ Project configs can also rotate to a fresh session automatically after long inac
 reset_on_idle_mins = 60
 ```
 
+Project configs can also rotate to a fresh session automatically after long inactivity:
+
+```toml
+[[projects]]
+reset_on_idle_mins = 60
+```
+
 ---
 
 ### 🔐 Permission Modes

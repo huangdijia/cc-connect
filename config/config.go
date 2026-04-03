@@ -328,6 +328,9 @@ func (c *Config) validate() error {
 		if proj.ResetOnIdleMins != nil && *proj.ResetOnIdleMins < 0 {
 			return fmt.Errorf("config: %s.reset_on_idle_mins must be >= 0", prefix)
 		}
+		if proj.ResetOnIdleMins != nil && *proj.ResetOnIdleMins < 0 {
+			return fmt.Errorf("config: %s.reset_on_idle_mins must be >= 0", prefix)
+		}
 		if err := validateUsersConfig(prefix, proj.Users); err != nil {
 			return err
 		}
